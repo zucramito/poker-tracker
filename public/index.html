@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Poker Tracker</title>
+  <style>
+    :root {
+      --bg: #0f1118;
+      --surface: #1a1d28;
+      --surface2: #242836;
+      --border: #2e3345;
+      --text: #e8e8ed;
+      --text-dim: #8b8fa3;
+      --accent: #6c5ce7;
+      --accent-hover: #7c6ff7;
+      --green: #00b894;
+      --red: #e74c3c;
+      --yellow: #fdcb6e;
+      --radius: 12px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .container { max-width: 800px; margin: 0 auto; padding: 16px; }
+
+    /* Header */
+    .header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 20px 0; margin-bottom: 8px;
+    }
+    .header h1 { font-size: 24px; font-weight: 700; }
+    .header h1 span { color: var(--accent); }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 10px 18px; border: none; border-radius: 8px;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: var(--border); }
+    .btn-green { background: var(--green); color: white; }
+    .btn-green:hover { opacity: 0.9; }
+    .btn-red { background: rgba(231,76,60,0.15); color: var(--red); }
+    .btn-red:hover { background: rgba(231,76,60,0.25); }
+    .btn-sm { padding: 6px 12px; font-size: 13px; }
+    .btn-icon { padding: 6px 10px; font-size: 16px; }
+
+    /* Cards */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
+      cursor: pointer; transition: border-color 0.15s;
+    }
+    .card:hover { border-color: var(--accent); }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .card-title { font-size: 16px; font-weight: 600; }
+    .card-date { font-size: 13px; color: var(--text-dim); }
+    .card-stats { display: flex; gap: 20px; font-size: 13px; color: var(--text-dim); }
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 20px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+    }
+    .badge-active { background: rgba(0,184,148,0.15); color: var(--green); }
+    .badge-closed { background: rgba(139,143,163,0.15); color: var(--text-dim); }
+
+    /* Forms */
+    .input {
+      width: 100%; padding: 10px 14px; background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); font-size: 14px; outline: none;
+      transition: border-color 0.15s;
+    }
+    .input:focus { border-color: var(--accent); }
+    .input::placeholder { color: var(--text-dim); }
+    .form-row { display: flex; gap: 10px; margin-bottom: 12px; }
+    .form-group { flex: 1; }
+    .form-group label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; font-weight: 500; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6); display: flex; align-items: center;
+      justify-content: center; z-index: 100; padding: 16px;
+    }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px; width: 100%;
+      max-width: 420px;
+    }
+    .modal h2 { font-size: 18px; margin-bottom: 16px; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
+    /* Table */
+    .player-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .player-table th {
+      text-align: left; padding: 10px 12px; font-size: 12px;
+      text-transform: uppercase; color: var(--text-dim);
+      border-bottom: 1px solid var(--border); font-weight: 600;
+    }
+    .player-table td {
+      padding: 12px; border-bottom: 1px solid var(--border);
+      font-size: 14px; vertical-align: middle;
+    }
+    .player-table tr:last-child td { border-bottom: none; }
+    .pnl-positive { color: var(--green); font-weight: 600; }
+    .pnl-negative { color: var(--red); font-weight: 600; }
+    .pnl-pending { color: var(--yellow); font-style: italic; }
+
+    /* Tally bar */
+    .tally-bar {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px; margin-bottom: 16px;
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+    }
+    .tally-item { text-align: center; }
+    .tally-label { font-size: 11px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px; font-weight: 600; }
+    .tally-value { font-size: 20px; font-weight: 700; }
+    .tally-balanced { text-align: center; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border); grid-column: 1 / -1; }
+    .balanced-yes { color: var(--green); }
+    .balanced-no { color: var(--red); }
+
+    /* Buyins list */
+    .buyins-list { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .buyin-chip {
+      display: inline-block; padding: 2px 8px; background: var(--surface2);
+      border-radius: 4px; font-size: 12px; color: var(--text-dim);
+    }
+
+    /* Player actions */
+    .player-actions { display: flex; gap: 6px; }
+
+    /* Autocomplete */
+    .autocomplete-wrapper { position: relative; }
+    .autocomplete-list {
+      position: absolute; top: 100%; left: 0; right: 0;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; max-height: 150px; overflow-y: auto;
+      z-index: 10; margin-top: 4px;
+    }
+    .autocomplete-item {
+      padding: 8px 14px; cursor: pointer; font-size: 14px;
+    }
+    .autocomplete-item:hover { background: var(--border); }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center; padding: 60px 20px; color: var(--text-dim);
+    }
+    .empty-state h3 { font-size: 18px; margin-bottom: 8px; color: var(--text); }
+    .empty-state p { margin-bottom: 20px; }
+
+    /* Back link */
+    .back-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      color: var(--text-dim); text-decoration: none; font-size: 14px;
+      margin-bottom: 16px; cursor: pointer;
+    }
+    .back-link:hover { color: var(--text); }
+
+    /* Session header */
+    .session-header {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      margin-bottom: 16px; flex-wrap: wrap; gap: 10px;
+    }
+    .session-info h2 { font-size: 22px; font-weight: 700; }
+    .session-meta { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
+
+    /* Responsive */
+    @media (max-width: 600px) {
+      .player-table { font-size: 13px; }
+      .player-table th, .player-table td { padding: 8px 6px; }
+      .tally-bar { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+      .tally-value { font-size: 16px; }
+      .form-row { flex-direction: column; }
+      .session-header { flex-direction: column; }
+      .player-actions { flex-wrap: wrap; }
+    }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="container" id="app"></div>
+
+  <script>
+    const API = '';
+
+    // --- State ---
+    let currentView = 'sessions'; // 'sessions' | 'session'
+    let currentSessionId = null;
+    let knownPlayers = [];
+
+    // --- API Helpers ---
+    async function api(path, opts = {}) {
+      const res = await fetch(API + path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+      });
+      return res.json();
+    }
+
+    // --- Format Helpers ---
+    function fmt(amount) {
+      if (amount === null || amount === undefined) return '-';
+      const sign = amount >= 0 ? '' : '-';
+      return `${sign}$${Math.abs(amount).toFixed(0)}`;
+    }
+
+    function fmtDate(dateStr) {
+      const d = new Date(dateStr + 'T00:00:00');
+      return d.toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
+    // --- Render Sessions List ---
+    async function renderSessions() {
+      currentView = 'sessions';
+      currentSessionId = null;
+      const sessions = await api('/api/sessions');
+      knownPlayers = await api('/api/players');
+
+      const app = document.getElementById('app');
+
+      if (sessions.length === 0) {
+        app.innerHTML = `
+          <div class="header">
+            <h1><span>&#9824;</span> Poker Tracker</h1>
+          </div>
+          <div class="empty-state">
+            <h3>No games yet</h3>
+            <p>Start your first poker session to begin tracking.</p>
+            <button class="btn btn-primary" onclick="showNewSessionModal()">+ New Session</button>
+          </div>
+        `;
+        return;
+      }
+
+      app.innerHTML = `
+        <div class="header">
+          <h1><span>&#9824;</span> Poker Tracker</h1>
+          <button class="btn btn-primary" onclick="showNewSessionModal()">+ New Session</button>
+        </div>
+        <div id="sessions-list">
+          ${sessions.map(s => `
+            <div class="card" onclick="renderSession('${s.id}')">
+              <div class="card-header">
+                <span class="card-title">${esc(s.name)}</span>
+                <span class="badge ${s.status === 'active' ? 'badge-active' : 'badge-closed'}">${s.status}</span>
+              </div>
+              <div class="card-stats">
+                <span>${fmtDate(s.date)}</span>
+                <span>${s.playerCount} player${s.playerCount !== 1 ? 's' : ''}</span>
+                <span>Pot: ${fmt(s.totalBuyins)}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    // --- Render Single Session ---
+    async function renderSession(id) {
+      currentView = 'session';
+      currentSessionId = id;
+      const session = await api(`/api/sessions/${id}`);
+      knownPlayers = await api('/api/players');
+
+      const app = document.getElementById('app');
+      const isActive = session.status === 'active';
+
+      app.innerHTML = `
+        <span class="back-link" onclick="renderSessions()">&#8592; All Sessions</span>
+        <div class="session-header">
+          <div class="session-info">
+            <h2>${esc(session.name)}</h2>
+            <div class="session-meta">${fmtDate(session.date)} &middot; <span class="badge ${isActive ? 'badge-active' : 'badge-closed'}">${session.status}</span></div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            ${isActive ? `<button class="btn btn-secondary btn-sm" onclick="showAddPlayerModal()">+ Add Player</button>` : ''}
+            ${isActive ? `<button class="btn btn-secondary btn-sm" onclick="closeSession('${session.id}')">End Session</button>` : `<button class="btn btn-secondary btn-sm" onclick="reopenSession('${session.id}')">Reopen</button>`}
+          </div>
+        </div>
+
+        ${session.entries.length > 0 ? `
+          <div class="tally-bar">
+            <div class="tally-item">
+              <div class="tally-label">Total Buy-ins</div>
+              <div class="tally-value">${fmt(session.tally.totalBuyins)}</div>
+            </div>
+            <div class="tally-item">
+              <div class="tally-label">Total Cashouts</div>
+              <div class="tally-value">${fmt(session.tally.totalCashouts)}</div>
+            </div>
+            <div class="tally-item">
+              <div class="tally-label">Net P&L</div>
+              <div class="tally-value ${session.tally.totalPnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${fmt(session.tally.totalPnl)}</div>
+            </div>
+            <div class="tally-balanced">
+              ${session.tally.balanced
+                ? '<span class="balanced-yes">&#10003; Books balanced &mdash; all cashouts tally</span>'
+                : session.entries.some(e => e.cashout === null)
+                  ? '<span class="pnl-pending">Waiting for all players to cash out...</span>'
+                  : `<span class="balanced-no">&#9888; Discrepancy of ${fmt(session.tally.totalPnl)}</span>`
+              }
+            </div>
+          </div>
+
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow-x:auto;">
+            <table class="player-table">
+              <thead>
+                <tr>
+                  <th>Player</th>
+                  <th>Buy-ins</th>
+                  <th>Total In</th>
+                  <th>Cash Out</th>
+                  <th>P&L</th>
+                  ${isActive ? '<th>Actions</th>' : ''}
+                </tr>
+              </thead>
+              <tbody>
+                ${session.entries.map(e => `
+                  <tr>
+                    <td style="font-weight:600;">${esc(e.playerName)}</td>
+                    <td>
+                      <div class="buyins-list">
+                        ${e.buyins.map((b, i) => `<span class="buyin-chip">${i === 0 ? '' : '+'}${fmt(b.amount)}</span>`).join('')}
+                      </div>
+                    </td>
+                    <td>${fmt(e.totalBuyin)}</td>
+                    <td>${e.cashout !== null ? fmt(e.cashout) : '<span class="pnl-pending">Playing</span>'}</td>
+                    <td>
+                      ${e.pnl !== null
+                        ? `<span class="${e.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${e.pnl >= 0 ? '+' : ''}${fmt(e.pnl)}</span>`
+                        : '<span class="pnl-pending">-</span>'
+                      }
+                    </td>
+                    ${isActive ? `
+                      <td>
+                        <div class="player-actions">
+                          <button class="btn btn-secondary btn-sm" onclick="showRebuyModal('${e.id}', '${esc(e.playerName)}')">Rebuy</button>
+                          ${e.cashout === null
+                            ? `<button class="btn btn-green btn-sm" onclick="showCashoutModal('${e.id}', '${esc(e.playerName)}', ${e.totalBuyin})">Cash Out</button>`
+                            : `<button class="btn btn-secondary btn-sm" onclick="showCashoutModal('${e.id}', '${esc(e.playerName)}', ${e.totalBuyin}, ${e.cashout})">Edit</button>`
+                          }
+                          <button class="btn btn-red btn-sm btn-icon" onclick="removePlayer('${e.id}')" title="Remove">&#10005;</button>
+                        </div>
+                      </td>
+                    ` : ''}
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : `
+          <div class="empty-state">
+            <h3>No players yet</h3>
+            <p>Add players to start tracking this session.</p>
+            ${isActive ? `<button class="btn btn-primary" onclick="showAddPlayerModal()">+ Add Player</button>` : ''}
+          </div>
+        `}
+      `;
+    }
+
+    // --- Modals ---
+    function showModal(html) {
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      overlay.id = 'modal';
+      overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
+      overlay.innerHTML = `<div class="modal">${html}</div>`;
+      document.body.appendChild(overlay);
+      const firstInput = overlay.querySelector('input');
+      if (firstInput) setTimeout(() => firstInput.focus(), 50);
+    }
+
+    function closeModal() {
+      const m = document.getElementById('modal');
+      if (m) m.remove();
+    }
+
+    function showNewSessionModal() {
+      const today = new Date().toISOString().split('T')[0];
+      showModal(`
+        <h2>New Session</h2>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>Session Name</label>
+          <input class="input" id="m-name" placeholder="e.g. Friday Night Game" value="Game Night">
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>Date</label>
+          <input class="input" id="m-date" type="date" value="${today}">
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="createSession()">Create</button>
+        </div>
+      `);
+    }
+
+    async function createSession() {
+      const name = document.getElementById('m-name').value.trim();
+      const date = document.getElementById('m-date').value;
+      const session = await api('/api/sessions', { method: 'POST', body: { name: name || 'Game Night', date } });
+      closeModal();
+      renderSession(session.id);
+    }
+
+    function showAddPlayerModal() {
+      showModal(`
+        <h2>Add Player</h2>
+        <div class="form-group autocomplete-wrapper" style="margin-bottom:12px;">
+          <label>Player Name</label>
+          <input class="input" id="m-player" placeholder="Enter name" oninput="onPlayerInput()" autocomplete="off">
+          <div id="m-player-suggestions" class="autocomplete-list hidden"></div>
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>Initial Buy-in (SGD)</label>
+          <input class="input" id="m-buyin" type="number" placeholder="e.g. 100" min="0">
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="addPlayer()">Add</button>
+        </div>
+      `);
+    }
+
+    function onPlayerInput() {
+      const val = document.getElementById('m-player').value.toLowerCase();
+      const list = document.getElementById('m-player-suggestions');
+      if (!val) { list.classList.add('hidden'); return; }
+      const matches = knownPlayers.filter(p => p.toLowerCase().includes(val));
+      if (matches.length === 0) { list.classList.add('hidden'); return; }
+      list.classList.remove('hidden');
+      list.innerHTML = matches.map(p => `<div class="autocomplete-item" onclick="selectPlayer('${esc(p)}')">${esc(p)}</div>`).join('');
+    }
+
+    function selectPlayer(name) {
+      document.getElementById('m-player').value = name;
+      document.getElementById('m-player-suggestions').classList.add('hidden');
+      document.getElementById('m-buyin').focus();
+    }
+
+    async function addPlayer() {
+      const playerName = document.getElementById('m-player').value.trim();
+      const buyin = parseFloat(document.getElementById('m-buyin').value) || 0;
+      if (!playerName) return;
+      await api(`/api/sessions/${currentSessionId}/entries`, { method: 'POST', body: { playerName, buyin } });
+      closeModal();
+      renderSession(currentSessionId);
+    }
+
+    function showRebuyModal(entryId, playerName) {
+      showModal(`
+        <h2>Rebuy - ${playerName}</h2>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>Rebuy Amount (SGD)</label>
+          <input class="input" id="m-rebuy" type="number" placeholder="e.g. 100" min="0">
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="doRebuy('${entryId}')">Add Rebuy</button>
+        </div>
+      `);
+    }
+
+    async function doRebuy(entryId) {
+      const amount = parseFloat(document.getElementById('m-rebuy').value) || 0;
+      await api(`/api/sessions/${currentSessionId}/entries/${entryId}/rebuy`, { method: 'POST', body: { amount } });
+      closeModal();
+      renderSession(currentSessionId);
+    }
+
+    function showCashoutModal(entryId, playerName, totalBuyin, currentCashout) {
+      showModal(`
+        <h2>Cash Out - ${playerName}</h2>
+        <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px;">Total buy-in: ${fmt(totalBuyin)}</p>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>Cash Out Amount (SGD)</label>
+          <input class="input" id="m-cashout" type="number" placeholder="e.g. 250" min="0" value="${currentCashout !== undefined ? currentCashout : ''}">
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-green" onclick="doCashout('${entryId}')">Confirm</button>
+        </div>
+      `);
+    }
+
+    async function doCashout(entryId) {
+      const amount = parseFloat(document.getElementById('m-cashout').value) || 0;
+      await api(`/api/sessions/${currentSessionId}/entries/${entryId}/cashout`, { method: 'PUT', body: { amount } });
+      closeModal();
+      renderSession(currentSessionId);
+    }
+
+    async function removePlayer(entryId) {
+      if (!confirm('Remove this player from the session?')) return;
+      await api(`/api/sessions/${currentSessionId}/entries/${entryId}`, { method: 'DELETE' });
+      renderSession(currentSessionId);
+    }
+
+    async function closeSession(id) {
+      await api(`/api/sessions/${id}`, { method: 'PUT', body: { status: 'closed' } });
+      renderSession(id);
+    }
+
+    async function reopenSession(id) {
+      await api(`/api/sessions/${id}`, { method: 'PUT', body: { status: 'active' } });
+      renderSession(id);
+    }
+
+    function esc(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // --- Init ---
+    renderSessions();
+  </script>
+</body>
+</html>
