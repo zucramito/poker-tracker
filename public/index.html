@@ -43,16 +43,23 @@
       font-size: 14px; font-weight: 600; cursor: pointer;
       transition: all 0.15s ease;
     }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-primary { background: var(--accent); color: white; }
-    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
     .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
-    .btn-secondary:hover { background: var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--border); }
     .btn-green { background: var(--green); color: white; }
-    .btn-green:hover { opacity: 0.9; }
+    .btn-green:hover:not(:disabled) { opacity: 0.9; }
     .btn-red { background: rgba(231,76,60,0.15); color: var(--red); }
-    .btn-red:hover { background: rgba(231,76,60,0.25); }
+    .btn-red:hover:not(:disabled) { background: rgba(231,76,60,0.25); }
     .btn-sm { padding: 6px 12px; font-size: 13px; }
     .btn-icon { padding: 6px 10px; font-size: 16px; }
+
+    /* Loading spinner */
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-page { display: flex; justify-content: center; padding: 80px 0; }
+    .loading-page .spinner { width: 28px; height: 28px; border-color: var(--border); border-top-color: var(--accent); }
 
     /* Cards */
     .card {
@@ -198,6 +205,7 @@
     let currentView = 'sessions'; // 'sessions' | 'session'
     let currentSessionId = null;
     let knownPlayers = [];
+    let isLoading = false;
 
     // --- API Helpers ---
     async function api(path, opts = {}) {
@@ -206,7 +214,32 @@
         ...opts,
         body: opts.body ? JSON.stringify(opts.body) : undefined,
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Request failed' }));
+        throw new Error(err.error || 'Request failed');
+      }
       return res.json();
+    }
+
+    // --- Loading helpers ---
+    function showLoading() {
+      document.getElementById('app').innerHTML = `
+        <div class="header">
+          <h1><span>&#9824;</span> Poker Tracker</h1>
+        </div>
+        <div class="loading-page"><div class="spinner"></div></div>
+      `;
+    }
+
+    function disableBtn(btn) {
+      btn.disabled = true;
+      btn._origText = btn.innerHTML;
+      btn.innerHTML = '<span class="spinner"></span>';
+    }
+
+    function enableBtn(btn) {
+      btn.disabled = false;
+      if (btn._origText) btn.innerHTML = btn._origText;
     }
 
     // --- Format Helpers ---
@@ -225,149 +258,175 @@
     async function renderSessions() {
       currentView = 'sessions';
       currentSessionId = null;
-      const sessions = await api('/api/sessions');
-      knownPlayers = await api('/api/players');
+      showLoading();
 
-      const app = document.getElementById('app');
+      try {
+        const [sessions, players] = await Promise.all([api('/api/sessions'), api('/api/players')]);
+        knownPlayers = players;
 
-      if (sessions.length === 0) {
+        const app = document.getElementById('app');
+
+        if (sessions.length === 0) {
+          app.innerHTML = `
+            <div class="header">
+              <h1><span>&#9824;</span> Poker Tracker</h1>
+            </div>
+            <div class="empty-state">
+              <h3>No games yet</h3>
+              <p>Start your first poker session to begin tracking.</p>
+              <button class="btn btn-primary" onclick="showNewSessionModal()">+ New Session</button>
+            </div>
+          `;
+          return;
+        }
+
         app.innerHTML = `
           <div class="header">
             <h1><span>&#9824;</span> Poker Tracker</h1>
-          </div>
-          <div class="empty-state">
-            <h3>No games yet</h3>
-            <p>Start your first poker session to begin tracking.</p>
             <button class="btn btn-primary" onclick="showNewSessionModal()">+ New Session</button>
           </div>
+          <div id="sessions-list">
+            ${sessions.map(s => `
+              <div class="card" onclick="renderSession(${s.id})">
+                <div class="card-header">
+                  <span class="card-title">${esc(s.name)}</span>
+                  <span class="badge ${s.status === 'active' ? 'badge-active' : 'badge-closed'}">${s.status}</span>
+                </div>
+                <div class="card-stats">
+                  <span>${fmtDate(s.date)}</span>
+                  <span>${s.playerCount} player${s.playerCount !== 1 ? 's' : ''}</span>
+                  <span>Pot: ${fmt(s.totalBuyins)}</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
         `;
-        return;
+      } catch (err) {
+        document.getElementById('app').innerHTML = `
+          <div class="header"><h1><span>&#9824;</span> Poker Tracker</h1></div>
+          <div class="empty-state">
+            <h3>Connection error</h3>
+            <p>${esc(err.message)}</p>
+            <button class="btn btn-primary" onclick="renderSessions()">Retry</button>
+          </div>
+        `;
       }
-
-      app.innerHTML = `
-        <div class="header">
-          <h1><span>&#9824;</span> Poker Tracker</h1>
-          <button class="btn btn-primary" onclick="showNewSessionModal()">+ New Session</button>
-        </div>
-        <div id="sessions-list">
-          ${sessions.map(s => `
-            <div class="card" onclick="renderSession('${s.id}')">
-              <div class="card-header">
-                <span class="card-title">${esc(s.name)}</span>
-                <span class="badge ${s.status === 'active' ? 'badge-active' : 'badge-closed'}">${s.status}</span>
-              </div>
-              <div class="card-stats">
-                <span>${fmtDate(s.date)}</span>
-                <span>${s.playerCount} player${s.playerCount !== 1 ? 's' : ''}</span>
-                <span>Pot: ${fmt(s.totalBuyins)}</span>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      `;
     }
 
     // --- Render Single Session ---
     async function renderSession(id) {
       currentView = 'session';
       currentSessionId = id;
-      const session = await api(`/api/sessions/${id}`);
-      knownPlayers = await api('/api/players');
+      showLoading();
 
-      const app = document.getElementById('app');
-      const isActive = session.status === 'active';
+      try {
+        const [session, players] = await Promise.all([api(`/api/sessions/${id}`), api('/api/players')]);
+        knownPlayers = players;
 
-      app.innerHTML = `
-        <span class="back-link" onclick="renderSessions()">&#8592; All Sessions</span>
-        <div class="session-header">
-          <div class="session-info">
-            <h2>${esc(session.name)}</h2>
-            <div class="session-meta">${fmtDate(session.date)} &middot; <span class="badge ${isActive ? 'badge-active' : 'badge-closed'}">${session.status}</span></div>
-          </div>
-          <div style="display:flex;gap:8px;">
-            ${isActive ? `<button class="btn btn-secondary btn-sm" onclick="showAddPlayerModal()">+ Add Player</button>` : ''}
-            ${isActive ? `<button class="btn btn-secondary btn-sm" onclick="closeSession('${session.id}')">End Session</button>` : `<button class="btn btn-secondary btn-sm" onclick="reopenSession('${session.id}')">Reopen</button>`}
-          </div>
-        </div>
+        const app = document.getElementById('app');
+        const isActive = session.status === 'active';
 
-        ${session.entries.length > 0 ? `
-          <div class="tally-bar">
-            <div class="tally-item">
-              <div class="tally-label">Total Buy-ins</div>
-              <div class="tally-value">${fmt(session.tally.totalBuyins)}</div>
+        app.innerHTML = `
+          <span class="back-link" onclick="renderSessions()">&#8592; All Sessions</span>
+          <div class="session-header">
+            <div class="session-info">
+              <h2>${esc(session.name)}</h2>
+              <div class="session-meta">${fmtDate(session.date)} &middot; <span class="badge ${isActive ? 'badge-active' : 'badge-closed'}">${session.status}</span></div>
             </div>
-            <div class="tally-item">
-              <div class="tally-label">Total Cashouts</div>
-              <div class="tally-value">${fmt(session.tally.totalCashouts)}</div>
-            </div>
-            <div class="tally-item">
-              <div class="tally-label">Net P&L</div>
-              <div class="tally-value ${session.tally.totalPnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${fmt(session.tally.totalPnl)}</div>
-            </div>
-            <div class="tally-balanced">
-              ${session.tally.balanced
-                ? '<span class="balanced-yes">&#10003; Books balanced &mdash; all cashouts tally</span>'
-                : session.entries.some(e => e.cashout === null)
-                  ? '<span class="pnl-pending">Waiting for all players to cash out...</span>'
-                  : `<span class="balanced-no">&#9888; Discrepancy of ${fmt(session.tally.totalPnl)}</span>`
-              }
+            <div style="display:flex;gap:8px;">
+              ${isActive ? `<button class="btn btn-secondary btn-sm" onclick="showAddPlayerModal()">+ Add Player</button>` : ''}
+              ${isActive ? `<button class="btn btn-secondary btn-sm" id="btn-end" onclick="closeSession(${session.id})">End Session</button>` : `<button class="btn btn-secondary btn-sm" id="btn-reopen" onclick="reopenSession(${session.id})">Reopen</button>`}
             </div>
           </div>
 
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow-x:auto;">
-            <table class="player-table">
-              <thead>
-                <tr>
-                  <th>Player</th>
-                  <th>Buy-ins</th>
-                  <th>Total In</th>
-                  <th>Cash Out</th>
-                  <th>P&L</th>
-                  ${isActive ? '<th>Actions</th>' : ''}
-                </tr>
-              </thead>
-              <tbody>
-                ${session.entries.map(e => `
+          ${session.entries.length > 0 ? `
+            <div class="tally-bar">
+              <div class="tally-item">
+                <div class="tally-label">Total Buy-ins</div>
+                <div class="tally-value">${fmt(session.tally.totalBuyins)}</div>
+              </div>
+              <div class="tally-item">
+                <div class="tally-label">Total Cashouts</div>
+                <div class="tally-value">${fmt(session.tally.totalCashouts)}</div>
+              </div>
+              <div class="tally-item">
+                <div class="tally-label">Net P&L</div>
+                <div class="tally-value ${session.tally.totalPnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${fmt(session.tally.totalPnl)}</div>
+              </div>
+              <div class="tally-balanced">
+                ${session.tally.balanced
+                  ? '<span class="balanced-yes">&#10003; Books balanced &mdash; all cashouts tally</span>'
+                  : session.entries.some(e => e.cashout === null)
+                    ? '<span class="pnl-pending">Waiting for all players to cash out...</span>'
+                    : `<span class="balanced-no">&#9888; Discrepancy of ${fmt(session.tally.totalPnl)}</span>`
+                }
+              </div>
+            </div>
+
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow-x:auto;">
+              <table class="player-table">
+                <thead>
                   <tr>
-                    <td style="font-weight:600;">${esc(e.playerName)}</td>
-                    <td>
-                      <div class="buyins-list">
-                        ${e.buyins.map((b, i) => `<span class="buyin-chip">${i === 0 ? '' : '+'}${fmt(b.amount)}</span>`).join('')}
-                      </div>
-                    </td>
-                    <td>${fmt(e.totalBuyin)}</td>
-                    <td>${e.cashout !== null ? fmt(e.cashout) : '<span class="pnl-pending">Playing</span>'}</td>
-                    <td>
-                      ${e.pnl !== null
-                        ? `<span class="${e.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${e.pnl >= 0 ? '+' : ''}${fmt(e.pnl)}</span>`
-                        : '<span class="pnl-pending">-</span>'
-                      }
-                    </td>
-                    ${isActive ? `
+                    <th>Player</th>
+                    <th>Buy-ins</th>
+                    <th>Total In</th>
+                    <th>Cash Out</th>
+                    <th>P&L</th>
+                    ${isActive ? '<th>Actions</th>' : ''}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${session.entries.map(e => `
+                    <tr>
+                      <td style="font-weight:600;">${esc(e.playerName)}</td>
                       <td>
-                        <div class="player-actions">
-                          <button class="btn btn-secondary btn-sm" onclick="showRebuyModal('${e.id}', '${esc(e.playerName)}')">Rebuy</button>
-                          ${e.cashout === null
-                            ? `<button class="btn btn-green btn-sm" onclick="showCashoutModal('${e.id}', '${esc(e.playerName)}', ${e.totalBuyin})">Cash Out</button>`
-                            : `<button class="btn btn-secondary btn-sm" onclick="showCashoutModal('${e.id}', '${esc(e.playerName)}', ${e.totalBuyin}, ${e.cashout})">Edit</button>`
-                          }
-                          <button class="btn btn-red btn-sm btn-icon" onclick="removePlayer('${e.id}')" title="Remove">&#10005;</button>
+                        <div class="buyins-list">
+                          ${e.buyins.map((b, i) => `<span class="buyin-chip">${i === 0 ? '' : '+'}${fmt(b.amount)}</span>`).join('')}
                         </div>
                       </td>
-                    ` : ''}
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        ` : `
+                      <td>${fmt(e.totalBuyin)}</td>
+                      <td>${e.cashout !== null ? fmt(e.cashout) : '<span class="pnl-pending">Playing</span>'}</td>
+                      <td>
+                        ${e.pnl !== null
+                          ? `<span class="${e.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${e.pnl >= 0 ? '+' : ''}${fmt(e.pnl)}</span>`
+                          : '<span class="pnl-pending">-</span>'
+                        }
+                      </td>
+                      ${isActive ? `
+                        <td>
+                          <div class="player-actions">
+                            <button class="btn btn-secondary btn-sm" onclick="showRebuyModal(${e.id}, '${esc(e.playerName)}')">Rebuy</button>
+                            ${e.cashout === null
+                              ? `<button class="btn btn-green btn-sm" onclick="showCashoutModal(${e.id}, '${esc(e.playerName)}', ${e.totalBuyin})">Cash Out</button>`
+                              : `<button class="btn btn-secondary btn-sm" onclick="showCashoutModal(${e.id}, '${esc(e.playerName)}', ${e.totalBuyin}, ${e.cashout})">Edit</button>`
+                            }
+                            <button class="btn btn-red btn-sm btn-icon" onclick="removePlayer(${e.id})" title="Remove">&#10005;</button>
+                          </div>
+                        </td>
+                      ` : ''}
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `
+            <div class="empty-state">
+              <h3>No players yet</h3>
+              <p>Add players to start tracking this session.</p>
+              ${isActive ? `<button class="btn btn-primary" onclick="showAddPlayerModal()">+ Add Player</button>` : ''}
+            </div>
+          `}
+        `;
+      } catch (err) {
+        document.getElementById('app').innerHTML = `
+          <span class="back-link" onclick="renderSessions()">&#8592; All Sessions</span>
           <div class="empty-state">
-            <h3>No players yet</h3>
-            <p>Add players to start tracking this session.</p>
-            ${isActive ? `<button class="btn btn-primary" onclick="showAddPlayerModal()">+ Add Player</button>` : ''}
+            <h3>Error loading session</h3>
+            <p>${esc(err.message)}</p>
+            <button class="btn btn-primary" onclick="renderSession(${id})">Retry</button>
           </div>
-        `}
-      `;
+        `;
+      }
     }
 
     // --- Modals ---
@@ -387,6 +446,19 @@
       if (m) m.remove();
     }
 
+    // Wraps an async action: disables the submit button, shows spinner, re-enables on error
+    async function withLoading(btnId, asyncFn) {
+      const btn = document.getElementById(btnId);
+      if (!btn || btn.disabled) return;
+      disableBtn(btn);
+      try {
+        await asyncFn();
+      } catch (err) {
+        enableBtn(btn);
+        alert('Error: ' + err.message);
+      }
+    }
+
     function showNewSessionModal() {
       const today = new Date().toISOString().split('T')[0];
       showModal(`
@@ -401,17 +473,19 @@
         </div>
         <div class="modal-actions">
           <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-          <button class="btn btn-primary" onclick="createSession()">Create</button>
+          <button class="btn btn-primary" id="btn-create" onclick="createSession()">Create</button>
         </div>
       `);
     }
 
     async function createSession() {
-      const name = document.getElementById('m-name').value.trim();
-      const date = document.getElementById('m-date').value;
-      const session = await api('/api/sessions', { method: 'POST', body: { name: name || 'Game Night', date } });
-      closeModal();
-      renderSession(session.id);
+      await withLoading('btn-create', async () => {
+        const name = document.getElementById('m-name').value.trim();
+        const date = document.getElementById('m-date').value;
+        const session = await api('/api/sessions', { method: 'POST', body: { name: name || 'Game Night', date } });
+        closeModal();
+        renderSession(session.id);
+      });
     }
 
     function showAddPlayerModal() {
@@ -428,7 +502,7 @@
         </div>
         <div class="modal-actions">
           <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-          <button class="btn btn-primary" onclick="addPlayer()">Add</button>
+          <button class="btn btn-primary" id="btn-add" onclick="addPlayer()">Add</button>
         </div>
       `);
     }
@@ -450,12 +524,14 @@
     }
 
     async function addPlayer() {
-      const playerName = document.getElementById('m-player').value.trim();
-      const buyin = parseFloat(document.getElementById('m-buyin').value) || 0;
-      if (!playerName) return;
-      await api(`/api/sessions/${currentSessionId}/entries`, { method: 'POST', body: { playerName, buyin } });
-      closeModal();
-      renderSession(currentSessionId);
+      await withLoading('btn-add', async () => {
+        const playerName = document.getElementById('m-player').value.trim();
+        const buyin = parseFloat(document.getElementById('m-buyin').value) || 0;
+        if (!playerName) throw new Error('Please enter a player name');
+        await api(`/api/sessions/${currentSessionId}/entries`, { method: 'POST', body: { playerName, buyin } });
+        closeModal();
+        renderSession(currentSessionId);
+      });
     }
 
     function showRebuyModal(entryId, playerName) {
@@ -467,16 +543,18 @@
         </div>
         <div class="modal-actions">
           <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-          <button class="btn btn-primary" onclick="doRebuy('${entryId}')">Add Rebuy</button>
+          <button class="btn btn-primary" id="btn-rebuy" onclick="doRebuy(${entryId})">Add Rebuy</button>
         </div>
       `);
     }
 
     async function doRebuy(entryId) {
-      const amount = parseFloat(document.getElementById('m-rebuy').value) || 0;
-      await api(`/api/sessions/${currentSessionId}/entries/${entryId}/rebuy`, { method: 'POST', body: { amount } });
-      closeModal();
-      renderSession(currentSessionId);
+      await withLoading('btn-rebuy', async () => {
+        const amount = parseFloat(document.getElementById('m-rebuy').value) || 0;
+        await api(`/api/sessions/${currentSessionId}/entries/${entryId}/rebuy`, { method: 'POST', body: { amount } });
+        closeModal();
+        renderSession(currentSessionId);
+      });
     }
 
     function showCashoutModal(entryId, playerName, totalBuyin, currentCashout) {
@@ -489,16 +567,18 @@
         </div>
         <div class="modal-actions">
           <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-          <button class="btn btn-green" onclick="doCashout('${entryId}')">Confirm</button>
+          <button class="btn btn-green" id="btn-cashout" onclick="doCashout(${entryId})">Confirm</button>
         </div>
       `);
     }
 
     async function doCashout(entryId) {
-      const amount = parseFloat(document.getElementById('m-cashout').value) || 0;
-      await api(`/api/sessions/${currentSessionId}/entries/${entryId}/cashout`, { method: 'PUT', body: { amount } });
-      closeModal();
-      renderSession(currentSessionId);
+      await withLoading('btn-cashout', async () => {
+        const amount = parseFloat(document.getElementById('m-cashout').value) || 0;
+        await api(`/api/sessions/${currentSessionId}/entries/${entryId}/cashout`, { method: 'PUT', body: { amount } });
+        closeModal();
+        renderSession(currentSessionId);
+      });
     }
 
     async function removePlayer(entryId) {
@@ -508,13 +588,17 @@
     }
 
     async function closeSession(id) {
-      await api(`/api/sessions/${id}`, { method: 'PUT', body: { status: 'closed' } });
-      renderSession(id);
+      await withLoading('btn-end', async () => {
+        await api(`/api/sessions/${id}`, { method: 'PUT', body: { status: 'closed' } });
+        renderSession(id);
+      });
     }
 
     async function reopenSession(id) {
-      await api(`/api/sessions/${id}`, { method: 'PUT', body: { status: 'active' } });
-      renderSession(id);
+      await withLoading('btn-reopen', async () => {
+        await api(`/api/sessions/${id}`, { method: 'PUT', body: { status: 'active' } });
+        renderSession(id);
+      });
     }
 
     function esc(str) {
