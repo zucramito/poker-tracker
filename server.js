@@ -1,176 +1,268 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
+const { Pool } = require('pg');
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, 'data.json');
+
+// PostgreSQL connection
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
+});
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// --- Data Layer ---
-function loadData() {
-  if (!fs.existsSync(DATA_FILE)) {
-    const initial = { sessions: [], players: [] };
-    fs.writeFileSync(DATA_FILE, JSON.stringify(initial, null, 2));
-    return initial;
-  }
-  return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-}
-
-function saveData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
-
-function generateId() {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+// --- Initialize Database Tables ---
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      date DATE NOT NULL DEFAULT CURRENT_DATE,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS entries (
+      id SERIAL PRIMARY KEY,
+      session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE,
+      player_name TEXT NOT NULL,
+      cashout NUMERIC,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS buyins (
+      id SERIAL PRIMARY KEY,
+      entry_id INTEGER REFERENCES entries(id) ON DELETE CASCADE,
+      amount NUMERIC NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  console.log('Database tables initialized');
 }
 
 // --- API Routes ---
 
 // GET all sessions (summary view)
-app.get('/api/sessions', (req, res) => {
-  const data = loadData();
-  const summaries = data.sessions.map(s => ({
-    id: s.id,
-    name: s.name,
-    date: s.date,
-    status: s.status,
-    playerCount: s.entries.length,
-    totalBuyins: s.entries.reduce((sum, e) => sum + e.buyins.reduce((bs, b) => bs + b.amount, 0), 0),
-    totalCashouts: s.entries.reduce((sum, e) => sum + (e.cashout || 0), 0),
-  }));
-  res.json(summaries.sort((a, b) => new Date(b.date) - new Date(a.date)));
+app.get('/api/sessions', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT s.id, s.name, s.date, s.status, s.created_at,
+        COUNT(DISTINCT e.id) AS player_count,
+        COALESCE(SUM(b.amount), 0) AS total_buyins,
+        COALESCE(SUM(e.cashout), 0) AS total_cashouts
+      FROM sessions s
+      LEFT JOIN entries e ON e.session_id = s.id
+      LEFT JOIN buyins b ON b.entry_id = e.id
+      GROUP BY s.id
+      ORDER BY s.date DESC, s.created_at DESC
+    `);
+    const sessions = result.rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      date: r.date,
+      status: r.status,
+      playerCount: parseInt(r.player_count),
+      totalBuyins: parseFloat(r.total_buyins),
+      totalCashouts: parseFloat(r.total_cashouts),
+    }));
+    res.json(sessions);
+  } catch (err) {
+    console.error('GET /api/sessions error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // POST new session
-app.post('/api/sessions', (req, res) => {
-  const data = loadData();
-  const session = {
-    id: generateId(),
-    name: req.body.name || `Game Night`,
-    date: req.body.date || new Date().toISOString().split('T')[0],
-    status: 'active',
-    entries: [],
-    createdAt: new Date().toISOString(),
-  };
-  data.sessions.push(session);
-  saveData(data);
-  res.status(201).json(session);
+app.post('/api/sessions', async (req, res) => {
+  try {
+    const name = req.body.name || 'Game Night';
+    const date = req.body.date || new Date().toISOString().split('T')[0];
+    const result = await pool.query(
+      'INSERT INTO sessions (name, date) VALUES ($1, $2) RETURNING *',
+      [name, date]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('POST /api/sessions error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
-// GET single session
-app.get('/api/sessions/:id', (req, res) => {
-  const data = loadData();
-  const session = data.sessions.find(s => s.id === req.params.id);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
+// GET single session with entries, buyins, and PnL
+app.get('/api/sessions/:id', async (req, res) => {
+  try {
+    const sessionRes = await pool.query('SELECT * FROM sessions WHERE id = $1', [req.params.id]);
+    if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Session not found' });
+    const session = sessionRes.rows[0];
 
-  // Calculate PnL for each entry
-  const enriched = {
-    ...session,
-    entries: session.entries.map(e => {
-      const totalBuyin = e.buyins.reduce((sum, b) => sum + b.amount, 0);
-      const pnl = e.cashout !== null ? e.cashout - totalBuyin : null;
-      return { ...e, totalBuyin, pnl };
-    }),
-  };
+    const entriesRes = await pool.query(
+      'SELECT * FROM entries WHERE session_id = $1 ORDER BY created_at',
+      [req.params.id]
+    );
 
-  // Calculate session tally
-  const totalBuyins = enriched.entries.reduce((s, e) => s + e.totalBuyin, 0);
-  const totalCashouts = enriched.entries.reduce((s, e) => s + (e.cashout || 0), 0);
-  const totalPnl = enriched.entries
-    .filter(e => e.pnl !== null)
-    .reduce((s, e) => s + e.pnl, 0);
-  const allCashedOut = enriched.entries.length > 0 && enriched.entries.every(e => e.cashout !== null);
+    const entries = [];
+    for (const entry of entriesRes.rows) {
+      const buyinsRes = await pool.query(
+        'SELECT * FROM buyins WHERE entry_id = $1 ORDER BY created_at',
+        [entry.id]
+      );
+      const buyins = buyinsRes.rows.map(b => ({ id: b.id, amount: parseFloat(b.amount), time: b.created_at }));
+      const totalBuyin = buyins.reduce((sum, b) => sum + b.amount, 0);
+      const cashout = entry.cashout !== null ? parseFloat(entry.cashout) : null;
+      const pnl = cashout !== null ? cashout - totalBuyin : null;
 
-  enriched.tally = { totalBuyins, totalCashouts, totalPnl, balanced: allCashedOut && Math.abs(totalPnl) < 0.01 };
-  res.json(enriched);
+      entries.push({
+        id: entry.id,
+        playerName: entry.player_name,
+        buyins,
+        totalBuyin,
+        cashout,
+        pnl,
+      });
+    }
+
+    const totalBuyins = entries.reduce((s, e) => s + e.totalBuyin, 0);
+    const totalCashouts = entries.reduce((s, e) => s + (e.cashout || 0), 0);
+    const totalPnl = entries.filter(e => e.pnl !== null).reduce((s, e) => s + e.pnl, 0);
+    const allCashedOut = entries.length > 0 && entries.every(e => e.cashout !== null);
+
+    res.json({
+      id: session.id,
+      name: session.name,
+      date: session.date,
+      status: session.status,
+      entries,
+      tally: {
+        totalBuyins,
+        totalCashouts,
+        totalPnl,
+        balanced: allCashedOut && Math.abs(totalPnl) < 0.01,
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/sessions/:id error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // PUT update session (name, date, status)
-app.put('/api/sessions/:id', (req, res) => {
-  const data = loadData();
-  const session = data.sessions.find(s => s.id === req.params.id);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
+app.put('/api/sessions/:id', async (req, res) => {
+  try {
+    const fields = [];
+    const values = [];
+    let idx = 1;
 
-  if (req.body.name !== undefined) session.name = req.body.name;
-  if (req.body.date !== undefined) session.date = req.body.date;
-  if (req.body.status !== undefined) session.status = req.body.status;
-  saveData(data);
-  res.json(session);
+    if (req.body.name !== undefined) { fields.push(`name = $${idx++}`); values.push(req.body.name); }
+    if (req.body.date !== undefined) { fields.push(`date = $${idx++}`); values.push(req.body.date); }
+    if (req.body.status !== undefined) { fields.push(`status = $${idx++}`); values.push(req.body.status); }
+
+    if (fields.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+
+    values.push(req.params.id);
+    const result = await pool.query(
+      `UPDATE sessions SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Session not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('PUT /api/sessions/:id error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // POST add player entry to session
-app.post('/api/sessions/:id/entries', (req, res) => {
-  const data = loadData();
-  const session = data.sessions.find(s => s.id === req.params.id);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
+app.post('/api/sessions/:id/entries', async (req, res) => {
+  try {
+    const sessionRes = await pool.query('SELECT id FROM sessions WHERE id = $1', [req.params.id]);
+    if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Session not found' });
 
-  const entry = {
-    id: generateId(),
-    playerName: req.body.playerName,
-    buyins: [{ amount: req.body.buyin || 0, time: new Date().toISOString() }],
-    cashout: null,
-  };
-  session.entries.push(entry);
+    const entryRes = await pool.query(
+      'INSERT INTO entries (session_id, player_name) VALUES ($1, $2) RETURNING *',
+      [req.params.id, req.body.playerName]
+    );
+    const entry = entryRes.rows[0];
 
-  // Track player name globally
-  if (!data.players.includes(req.body.playerName)) {
-    data.players.push(req.body.playerName);
+    const buyin = req.body.buyin || 0;
+    await pool.query(
+      'INSERT INTO buyins (entry_id, amount) VALUES ($1, $2)',
+      [entry.id, buyin]
+    );
+
+    res.status(201).json({ id: entry.id, playerName: entry.player_name, buyins: [{ amount: buyin }], cashout: null });
+  } catch (err) {
+    console.error('POST entries error:', err);
+    res.status(500).json({ error: 'Database error' });
   }
-
-  saveData(data);
-  res.status(201).json(entry);
 });
 
 // POST rebuy for a player entry
-app.post('/api/sessions/:sid/entries/:eid/rebuy', (req, res) => {
-  const data = loadData();
-  const session = data.sessions.find(s => s.id === req.params.sid);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
-
-  const entry = session.entries.find(e => e.id === req.params.eid);
-  if (!entry) return res.status(404).json({ error: 'Entry not found' });
-
-  entry.buyins.push({ amount: req.body.amount || 0, time: new Date().toISOString() });
-  saveData(data);
-  res.json(entry);
+app.post('/api/sessions/:sid/entries/:eid/rebuy', async (req, res) => {
+  try {
+    const amount = req.body.amount || 0;
+    await pool.query(
+      'INSERT INTO buyins (entry_id, amount) VALUES ($1, $2)',
+      [req.params.eid, amount]
+    );
+    res.json({ success: true, amount });
+  } catch (err) {
+    console.error('POST rebuy error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // PUT cashout for a player entry
-app.put('/api/sessions/:sid/entries/:eid/cashout', (req, res) => {
-  const data = loadData();
-  const session = data.sessions.find(s => s.id === req.params.sid);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
-
-  const entry = session.entries.find(e => e.id === req.params.eid);
-  if (!entry) return res.status(404).json({ error: 'Entry not found' });
-
-  entry.cashout = req.body.amount;
-  saveData(data);
-  res.json(entry);
+app.put('/api/sessions/:sid/entries/:eid/cashout', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'UPDATE entries SET cashout = $1 WHERE id = $2 RETURNING *',
+      [req.body.amount, req.params.eid]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Entry not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('PUT cashout error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // DELETE player entry from session
-app.delete('/api/sessions/:sid/entries/:eid', (req, res) => {
-  const data = loadData();
-  const session = data.sessions.find(s => s.id === req.params.sid);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
-
-  session.entries = session.entries.filter(e => e.id !== req.params.eid);
-  saveData(data);
-  res.json({ success: true });
+app.delete('/api/sessions/:sid/entries/:eid', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM entries WHERE id = $1', [req.params.eid]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE entry error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // GET known player names (for autocomplete)
-app.get('/api/players', (req, res) => {
-  const data = loadData();
-  res.json(data.players);
+app.get('/api/players', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT DISTINCT player_name FROM entries ORDER BY player_name'
+    );
+    res.json(result.rows.map(r => r.player_name));
+  } catch (err) {
+    console.error('GET players error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
-app.listen(PORT, () => {
-  console.log(`Poker Tracker running on http://localhost:${PORT}`);
+// --- Start ---
+initDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Poker Tracker running on http://localhost:${PORT}`);
+  });
+}).catch(err => {
+  console.error('Failed to initialize database:', err);
+  process.exit(1);
 });
